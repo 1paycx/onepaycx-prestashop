@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<module>
+    <name>onepaycx</name>
+    <displayName><![CDATA[1pay.cx — pay by card or crypto]]></displayName>
+    <version><![CDATA[1.0.0]]></version>
+    <description><![CDATA[Accept card, Bitcoin and Monero payments with 1pay.cx. Buyers pay on a hosted checkout; orders are confirmed by a signed webhook.]]></description>
+    <author><![CDATA[1pay.cx]]></author>
+    <tab><![CDATA[payments_gateways]]></tab>
+    <confirmUninstall><![CDATA[Remove 1pay.cx? Orders already placed are kept; only the module settings are deleted.]]></confirmUninstall>
+    <is_configurable>1</is_configurable>
+    <need_instance>0</need_instance>
+    <limited_countries></limited_countries>
+</module>
