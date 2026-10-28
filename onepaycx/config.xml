@@ -2,7 +2,7 @@
 <module>
     <name>onepaycx</name>
     <displayName><![CDATA[1pay.cx — pay by card or crypto]]></displayName>
-    <version><![CDATA[1.0.0]]></version>
+    <version><![CDATA[1.1.0]]></version>
     <description><![CDATA[Accept card, Bitcoin and Monero payments with 1pay.cx. Buyers pay on a hosted checkout; orders are confirmed by a signed webhook.]]></description>
     <author><![CDATA[1pay.cx]]></author>
     <tab><![CDATA[payments_gateways]]></tab>

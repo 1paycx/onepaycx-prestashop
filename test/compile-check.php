@@ -75,12 +75,19 @@ class FakeApi
         return array('ok' => true, 'status' => 200, 'data' => self::$payment, 'error' => '');
     }
 
+    public static $currency = 'USD';
+    public static $livemode = true;
+    public static $getOk = true;
+
     public function getPayment($id)
     {
         self::$polled[] = $id;
+        if (!self::$getOk) {
+            return array('ok' => false, 'status' => 0, 'data' => null, 'error' => 'network_error');
+        }
         $status = isset(self::$statuses[$id]) ? self::$statuses[$id] : self::$status;
 
-        return array('ok' => true, 'status' => 200, 'data' => array('id' => $id, 'status' => $status, 'amount' => self::$amount, 'currency' => 'USD'), 'error' => '');
+        return array('ok' => true, 'status' => 200, 'data' => array('id' => $id, 'status' => $status, 'amount' => self::$amount, 'currency' => self::$currency, 'livemode' => self::$livemode), 'error' => '');
     }
 }
 
@@ -109,7 +116,7 @@ class TestWebhookController extends OnepaycxWebhookModuleFrontController
 
 echo "2. Module instantiation, install, configuration\n";
 $module = new TestOnepaycx();
-check('module name/version', $module->name === 'onepaycx' && $module->version === '1.0.0');
+check('module name/version', $module->name === 'onepaycx' && $module->version === '1.1.0');
 check('install() registers both hooks', $module->install() && in_array('paymentOptions', $module->registeredHooks, true) && in_array('displayPaymentReturn', $module->registeredHooks, true));
 check('not configured before a key is saved', !$module->isConfigured());
 
@@ -133,7 +140,7 @@ check('isValidTitle allows unicode punctuation and rejects what isGenericName re
 
 echo "3. Signature verification\n";
 $secret = 'whsec_test';
-$raw = json_encode(array('event' => 'payment.paid', 'data' => array('paymentId' => 'k3Xm9Qp2', 'reference' => '7', 'amount' => 12.5, 'valueForwarded' => 12.5, 'status' => 'paid'), 'at' => '2026-09-08T00:00:00.000Z'));
+$raw = json_encode(array('event' => 'payment.paid', 'data' => array('paymentId' => 'k3Xm9Qp2', 'reference' => '7', 'amount' => 12.5, 'valueForwarded' => 12.5, 'status' => 'paid', 'currency' => 'USD'), 'at' => '2026-09-08T00:00:00.000Z'));
 $sig = hash_hmac('sha256', $raw, $secret);
 check('valid signature accepted', Onepaycx::verifySignature($raw, $sig, $secret));
 check('upper-case hex accepted', Onepaycx::verifySignature($raw, strtoupper($sig), $secret));
@@ -222,11 +229,18 @@ check('a payment row that cannot be stored never sends the buyer to pay', $url =
 check('payment row for the cart is still the original one', $module->getPaymentByCart(7)['id_payment'] === 'k3Xm9Qp2' && count($module->getPaymentsByCart(7)) === 1);
 
 echo "7. Webhook controller\n";
-function webhook($module, $body, $sig)
+// The webhook re-fetches GET /v1/payments/{id}; by default it confirms "paid".
+FakeApi::$status = 'paid';
+function webhook($module, $body, $sig, $sigV2 = '')
 {
     $c = new TestWebhookController($module);
     $c->body = $body;
     $_SERVER['HTTP_X_1PAY_SIGNATURE'] = $sig;
+    if ($sigV2 !== '') {
+        $_SERVER['HTTP_X_1PAY_SIGNATURE_V2'] = $sigV2;
+    } else {
+        unset($_SERVER['HTTP_X_1PAY_SIGNATURE_V2']);
+    }
     try {
         $c->postProcess();
     } catch (StubResponse $r) {
@@ -246,20 +260,20 @@ $other = json_encode(array('event' => 'card.issued', 'data' => array(), 'at' => 
 $r = webhook($module, $other, hash_hmac('sha256', $other, $secret));
 check('other events acknowledged and ignored -> 200', $r && $r->status === 200 && $r->text === 'ignored');
 
-$unknown = json_encode(array('event' => 'payment.paid', 'data' => array('paymentId' => 'zzz', 'reference' => '7', 'amount' => 12.5, 'status' => 'paid'), 'at' => 'x'));
+$unknown = json_encode(array('event' => 'payment.paid', 'data' => array('paymentId' => 'zzz', 'reference' => '7', 'amount' => 12.5, 'status' => 'paid', 'currency' => 'USD'), 'at' => 'x'));
 $r = webhook($module, $unknown, hash_hmac('sha256', $unknown, $secret));
 check('paid event for a payment this shop did not create -> 404', $r && $r->status === 404 && empty($module->validated));
 
-$missing = json_encode(array('event' => 'payment.paid', 'data' => array('paymentId' => 'k3Xm9Qp2', 'reference' => '999', 'amount' => 1, 'status' => 'paid'), 'at' => 'x'));
+$missing = json_encode(array('event' => 'payment.paid', 'data' => array('paymentId' => 'k3Xm9Qp2', 'reference' => '999', 'amount' => 1, 'status' => 'paid', 'currency' => 'USD'), 'at' => 'x'));
 $r = webhook($module, $missing, hash_hmac('sha256', $missing, $secret));
 check('unknown cart -> 404', $r && $r->status === 404);
 
-$wrongCart = json_encode(array('event' => 'payment.paid', 'data' => array('paymentId' => 'k3Xm9Qp2', 'reference' => '8', 'amount' => 12.5, 'status' => 'paid'), 'at' => 'x'));
+$wrongCart = json_encode(array('event' => 'payment.paid', 'data' => array('paymentId' => 'k3Xm9Qp2', 'reference' => '8', 'amount' => 12.5, 'status' => 'paid', 'currency' => 'USD'), 'at' => 'x'));
 Cart::$fixtures[8] = array('id' => 8, 'id_customer' => 3, 'id_address_delivery' => 1, 'id_address_invoice' => 1, 'id_currency' => 1, 'secure_key' => str_repeat('b', 32), 'total' => 12.5);
 $r = webhook($module, $wrongCart, hash_hmac('sha256', $wrongCart, $secret));
 check('known payment but for another cart -> 404, no validateOrder', $r && $r->status === 404 && empty($module->validated));
 
-$under = json_encode(array('event' => 'payment.paid', 'data' => array('paymentId' => 'k3Xm9Qp2', 'reference' => '7', 'amount' => 12.49, 'status' => 'paid'), 'at' => 'x'));
+$under = json_encode(array('event' => 'payment.paid', 'data' => array('paymentId' => 'k3Xm9Qp2', 'reference' => '7', 'amount' => 12.48, 'status' => 'paid', 'currency' => 'USD'), 'at' => 'x'));
 $r = webhook($module, $under, hash_hmac('sha256', $under, $secret));
 check('reported amount below the quoted total -> 400, no validateOrder', $r && $r->status === 400 && $r->text === 'amount mismatch' && empty($module->validated));
 
@@ -269,7 +283,7 @@ check('currency mismatch -> 400, no validateOrder', $r && $r->status === 400 && 
 
 // The server stores amount * (1 + customer surcharge) and reports that figure;
 // the order must still be validated with the total this shop quoted.
-$surcharged = json_encode(array('event' => 'payment.paid', 'data' => array('paymentId' => 'k3Xm9Qp2', 'reference' => '7', 'amount' => 12.88, 'valueForwarded' => 12.88, 'status' => 'paid'), 'at' => '2026-09-08T00:00:00.000Z'));
+$surcharged = json_encode(array('event' => 'payment.paid', 'data' => array('paymentId' => 'k3Xm9Qp2', 'reference' => '7', 'amount' => 12.88, 'valueForwarded' => 12.88, 'status' => 'paid', 'currency' => 'USD'), 'at' => '2026-09-08T00:00:00.000Z'));
 $r = webhook($module, $surcharged, hash_hmac('sha256', $surcharged, $secret));
 check('valid paid event (surcharged amount 12.88 for a 12.50 cart) -> 200 ok and validateOrder called once', $r && $r->status === 200 && $r->text === 'ok' && count($module->validated) === 1);
 $v = $module->validated[0];
@@ -293,12 +307,12 @@ $module->active = true;
 Cart::$fixtures[9] = array('id' => 9, 'id_customer' => 3, 'id_address_delivery' => 1, 'id_address_invoice' => 1, 'id_currency' => 1, 'secure_key' => str_repeat('c', 32), 'total' => 12.5);
 check('two payments stored for one cart', $module->savePayment(9, 'pA', 12.5, 'USD') && $module->savePayment(9, 'pB', 12.5, 'USD')
     && count($module->getPaymentsByCart(9)) === 2 && $module->getPaymentByCart(9)['id_payment'] === 'pB');
-$earlier = json_encode(array('event' => 'payment.paid', 'data' => array('paymentId' => 'pA', 'reference' => '9', 'amount' => 12.5, 'status' => 'paid'), 'at' => 'x'));
+$earlier = json_encode(array('event' => 'payment.paid', 'data' => array('paymentId' => 'pA', 'reference' => '9', 'amount' => 12.5, 'status' => 'paid', 'currency' => 'USD'), 'at' => 'x'));
 $r = webhook($module, $earlier, hash_hmac('sha256', $earlier, $secret));
 check('paid notify for the earlier of two links -> 200 ok and the order is created', $r && $r->status === 200 && $r->text === 'ok'
     && count($module->validated) === 2 && $module->validated[1]['id_cart'] === 9 && $module->validated[1]['extra_vars'] === array('transaction_id' => 'pA'));
 check('only the paid row is marked paid', $module->getPaymentById('pA')['status'] === 'paid' && $module->getPaymentById('pB')['status'] === 'pending');
-$later = json_encode(array('event' => 'payment.paid', 'data' => array('paymentId' => 'pB', 'reference' => '9', 'amount' => 12.5, 'status' => 'paid'), 'at' => 'x'));
+$later = json_encode(array('event' => 'payment.paid', 'data' => array('paymentId' => 'pB', 'reference' => '9', 'amount' => 12.5, 'status' => 'paid', 'currency' => 'USD'), 'at' => 'x'));
 $r = webhook($module, $later, hash_hmac('sha256', $later, $secret));
 check('a second link paid for an already-ordered cart -> 200 already paid, no second order', $r && $r->status === 200 && $r->text === 'already paid' && count($module->validated) === 2);
 
@@ -306,12 +320,67 @@ check('a second link paid for an already-ordered cart -> 200 already paid, no se
 Cart::$fixtures[11] = array('id' => 11, 'id_customer' => 3, 'id_address_delivery' => 1, 'id_address_invoice' => 1, 'id_currency' => 1, 'secure_key' => str_repeat('e', 32), 'total' => 12.5);
 $module->savePayment(11, 'p11', 12.5, 'USD');
 $module->throwValidate = 777;
-$race = json_encode(array('event' => 'payment.paid', 'data' => array('paymentId' => 'p11', 'reference' => '11', 'amount' => 12.5, 'status' => 'paid'), 'at' => 'x'));
+$race = json_encode(array('event' => 'payment.paid', 'data' => array('paymentId' => 'p11', 'reference' => '11', 'amount' => 12.5, 'status' => 'paid', 'currency' => 'USD'), 'at' => 'x'));
 $r = webhook($module, $race, hash_hmac('sha256', $race, $secret));
 check('validateOrder throwing because the order was just created elsewhere -> 200 ok (order 777 found), no 500', $r && $r->status === 200 && $r->text === 'ok'
     && $module->getPaymentById('p11')['status'] === 'paid');
 $module->throwValidate = 0;
 check('advisory lock balanced after the exception', Db::getInstance()->locks['get'] === Db::getInstance()->locks['release']);
+
+// Hardening: every check below must refuse without creating an order.
+Cart::$fixtures[13] = array('id' => 13, 'id_customer' => 3, 'id_address_delivery' => 1, 'id_address_invoice' => 1, 'id_currency' => 1, 'secure_key' => str_repeat('g', 32), 'total' => 12.5);
+$module->savePayment(13, 'p13', 12.5, 'USD');
+$p13 = json_encode(array('event' => 'payment.paid', 'data' => array('paymentId' => 'p13', 'reference' => '13', 'amount' => 12.5, 'status' => 'paid', 'currency' => 'USD'), 'at' => 'x'));
+$v = count($module->validated);
+$noCur = json_encode(array('event' => 'payment.paid', 'data' => array('paymentId' => 'p13', 'reference' => '13', 'amount' => 12.5, 'status' => 'paid'), 'at' => 'x'));
+$r = webhook($module, $noCur, hash_hmac('sha256', $noCur, $secret));
+check('notify without a currency -> 400', $r && $r->status === 400 && count($module->validated) === $v);
+$noAmt = json_encode(array('event' => 'payment.paid', 'data' => array('paymentId' => 'p13', 'reference' => '13', 'status' => 'paid', 'currency' => 'USD'), 'at' => 'x'));
+$r = webhook($module, $noAmt, hash_hmac('sha256', $noAmt, $secret));
+check('notify without an amount -> 400', $r && $r->status === 400 && count($module->validated) === $v);
+FakeApi::$statuses = array('p13' => 'pending');
+$r = webhook($module, $p13, hash_hmac('sha256', $p13, $secret));
+check('signed notify but the API says not paid -> 409, no order', $r && $r->status === 409 && count($module->validated) === $v);
+FakeApi::$statuses = array();
+FakeApi::$getOk = false;
+$r = webhook($module, $p13, hash_hmac('sha256', $p13, $secret));
+check('API re-fetch unavailable -> 503, no order', $r && $r->status === 503 && count($module->validated) === $v);
+FakeApi::$getOk = true;
+FakeApi::$amount = 12.0;
+$r = webhook($module, $p13, hash_hmac('sha256', $p13, $secret));
+check('API re-fetch reports less than quoted -> 400, no order', $r && $r->status === 400 && count($module->validated) === $v);
+FakeApi::$amount = 12.5;
+FakeApi::$currency = 'EUR';
+$r = webhook($module, $p13, hash_hmac('sha256', $p13, $secret));
+check('API re-fetch in another currency -> 400, no order', $r && $r->status === 400 && count($module->validated) === $v);
+FakeApi::$currency = 'USD';
+
+Configuration::updateValue('ONEPAYCX_API_KEY', 'pk_live1.secret');
+$test13 = json_encode(array('event' => 'payment.paid', 'data' => array('paymentId' => 'p13', 'reference' => '13', 'amount' => 12.5, 'status' => 'paid', 'currency' => 'USD', 'livemode' => false), 'at' => 'x'));
+$r = webhook($module, $test13, hash_hmac('sha256', $test13, $secret));
+check('livemode:false notify under a live key -> 400 test payment', $r && $r->status === 400 && $r->text === 'test payment' && count($module->validated) === $v);
+FakeApi::$livemode = false;
+$r = webhook($module, $p13, hash_hmac('sha256', $p13, $secret));
+check('live key, API re-fetch says livemode:false -> 400', $r && $r->status === 400 && count($module->validated) === $v);
+FakeApi::$livemode = true;
+Configuration::updateValue('ONEPAYCX_API_KEY', 'pk_test.secret');
+
+$now = time();
+$v2 = function ($body, $t, $key = 'whsec_test') {
+    return 't=' . $t . ',v1=' . hash_hmac('sha256', $t . '.' . $body, $key);
+};
+check('verifySignatureV2 accepts fresh, rejects stale/future/tampered/wrong-secret/missing-t',
+    Onepaycx::verifySignatureV2($p13, $v2($p13, $now), $secret, $now)
+    && !Onepaycx::verifySignatureV2($p13, $v2($p13, $now - 301), $secret, $now)
+    && !Onepaycx::verifySignatureV2($p13, $v2($p13, $now + 301), $secret, $now)
+    && !Onepaycx::verifySignatureV2($p13 . ' ', $v2($p13, $now), $secret, $now)
+    && !Onepaycx::verifySignatureV2($p13, $v2($p13, $now, 'other'), $secret, $now)
+    && !Onepaycx::verifySignatureV2($p13, 'v1=' . hash_hmac('sha256', $p13, $secret), $secret, $now));
+$r = webhook($module, $p13, hash_hmac('sha256', $p13, $secret), $v2($p13, $now - 400));
+check('stale V2 signature -> 401 even with a valid legacy header', $r && $r->status === 401 && count($module->validated) === $v);
+$r = webhook($module, $p13, '', $v2($p13, $now));
+check('fresh V2 signature alone -> 200 ok, order created', $r && $r->status === 200 && $r->text === 'ok' && count($module->validated) === $v + 1);
+FakeApi::$status = 'pending';
 
 echo "8. Return controller\n";
 Tools::$request = array('id_cart' => 7, 'key' => str_repeat('a', 32));

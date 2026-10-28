@@ -26,7 +26,7 @@ require_once dirname(__FILE__) . '/classes/OnepaycxApi.php';
 
 class Onepaycx extends PaymentModule
 {
-    const VERSION = '1.0.0';
+    const VERSION = '1.1.0';
 
     const CFG_API_KEY = 'ONEPAYCX_API_KEY';
     const CFG_WEBHOOK_SECRET = 'ONEPAYCX_WEBHOOK_SECRET';
@@ -420,6 +420,104 @@ class Onepaycx extends PaymentModule
         $expected = hash_hmac('sha256', (string) $rawBody, $secret);
 
         return hash_equals($expected, $signature);
+    }
+
+    /** Maximum age (either direction) of a timestamped X-1pay-Signature-V2, in seconds. */
+    const SIGNATURE_TOLERANCE = 300;
+
+    /**
+     * Constant-time check of X-1pay-Signature-V2: "t=<unix>,v1=<hex>" where v1 is
+     * the hex HMAC-SHA256 of "<t>.<raw body>". The timestamp must be within
+     * SIGNATURE_TOLERANCE seconds of $now so a captured notify cannot be replayed.
+     *
+     * @param string $rawBody
+     * @param string $header
+     * @param string $secret
+     * @param int|null $now
+     *
+     * @return bool
+     */
+    public static function verifySignatureV2($rawBody, $header, $secret, $now = null)
+    {
+        $secret = (string) $secret;
+        if ($secret === '') {
+            return false;
+        }
+        $t = null;
+        $v1 = array();
+        foreach (explode(',', (string) $header) as $part) {
+            $kv = explode('=', trim($part), 2);
+            if (count($kv) !== 2) {
+                continue;
+            }
+            if ($kv[0] === 't' && preg_match('/^[0-9]{1,12}$/', $kv[1])) {
+                $t = (int) $kv[1];
+            } elseif ($kv[0] === 'v1') {
+                $v1[] = strtolower($kv[1]);
+            }
+        }
+        if ($t === null || count($v1) === 0) {
+            return false;
+        }
+        $now = $now === null ? time() : (int) $now;
+        if (abs($now - $t) > self::SIGNATURE_TOLERANCE) {
+            return false;
+        }
+        $expected = hash_hmac('sha256', $t . '.' . (string) $rawBody, $secret);
+        $ok = false;
+        foreach ($v1 as $candidate) {
+            if (preg_match('/^[0-9a-f]{64}$/', $candidate) && hash_equals($expected, $candidate)) {
+                $ok = true;
+            }
+        }
+
+        return $ok;
+    }
+
+    /**
+     * Verify a notify: the timestamped V2 header when present (it then decides
+     * alone, no fallback), otherwise the legacy body-only signature.
+     *
+     * @return bool
+     */
+    public static function verifyWebhook($rawBody, $v2Header, $legacyHeader, $secret, $now = null)
+    {
+        if (trim((string) $v2Header) !== '') {
+            return self::verifySignatureV2($rawBody, $v2Header, $secret, $now);
+        }
+
+        return (string) $legacyHeader !== '' && self::verifySignature($rawBody, $legacyHeader, $secret);
+    }
+
+    /**
+     * Test keys are pk_test_...; everything else is a live key.
+     *
+     * @param string $key
+     *
+     * @return bool
+     */
+    public static function isTestKey($key)
+    {
+        return strpos((string) $key, 'pk_test_') === 0;
+    }
+
+    /**
+     * Strict form of reportedAmountCovers() for the webhook: amount and currency
+     * must both be present, the currency equal, and the amount no lower than the
+     * quote minus 0.01 (a customer surcharge on top is fine).
+     *
+     * @return bool
+     */
+    public static function coversQuote($amount, $currency, $quotedAmount, $quotedCurrency)
+    {
+        if (!is_numeric($amount) || !is_string($currency)) {
+            return false;
+        }
+        if (strtoupper($currency) !== strtoupper((string) $quotedCurrency)) {
+            return false;
+        }
+
+        return (int) round((float) $amount * 100) >= (int) round((float) $quotedAmount * 100) - 1;
     }
 
     /**

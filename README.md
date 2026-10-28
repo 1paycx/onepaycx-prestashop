@@ -1,6 +1,6 @@
 # 1pay.cx for PrestaShop
 
-Accept card, Bitcoin and Monero payments in PrestaShop 1.7.x and 8.x with
+Accept card and crypto payments in PrestaShop 1.7.x and 8.x with
 [1pay.cx](https://1pay.cx). Buyers pay on the hosted checkout; the order is confirmed
 automatically by a signed webhook. Card sales settle to you in USDC on Polygon, crypto at a
 flat 1%. No KYB, no rolling reserves, no chargebacks.

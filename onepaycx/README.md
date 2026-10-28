@@ -3,7 +3,7 @@
 Accept card, Bitcoin and Monero payments in PrestaShop 1.7.x and 8.x. Buyers pay on
 the 1pay.cx hosted checkout; the order is confirmed automatically by a signed webhook.
 
-- Version 1.0.0 — PHP 7.4 to 8.1, PrestaShop 1.7.0 to 8.x
+- Version 1.1.0 — PHP 7.4 to 8.1, PrestaShop 1.7.0 to 8.x
 - Licence: MIT (see `LICENSE`)
 - All traffic goes to `https://api.1pay.cx` and `https://1pay.cx` only
 
@@ -26,7 +26,7 @@ The PHP cURL extension must be enabled (it is on every standard PrestaShop host)
 | --- | --- | --- |
 | Checkout | `hookPaymentOptions` | Shows "Pay by card or crypto" (title configurable). |
 | Pay | `controllers/front/redirect.php` | `POST /v1/payments` with the cart total (two decimals), currency ISO code, customer email, `reference` = cart id, `notifyUrl` and `redirectUrl` pointing back to this shop; the buyer is sent to `https://1pay.cx{checkoutUrl}`. No order exists yet. |
-| Paid | `controllers/front/webhook.php` | 1pay.cx POSTs `{ event: "payment.paid", data, at }`. The `X-1pay-Signature` header (hex HMAC-SHA256 of the raw body) is checked with `hash_equals` before anything else. The cart named by `data.reference` becomes an order in state *Payment accepted* via `validateOrder`. |
+| Paid | `controllers/front/webhook.php` | 1pay.cx POSTs `{ event: "payment.paid", data, at }`. The `X-1pay-Signature-V2` header (`t=<unix>,v1=<hex HMAC-SHA256 of "<t>.<raw body>">`, within 300 s) is checked with `hash_equals` when present, else the legacy `X-1pay-Signature` (hex HMAC-SHA256 of the raw body). The payment id must be one stored for that cart, amount/currency must cover the stored quote (0.01 tolerance), `livemode:false` is refused under a live key, and `GET /v1/payments/{id}` with the configured key must confirm `paid` with matching amount/currency. The cart named by `data.reference` becomes an order in state *Payment accepted* via `validateOrder`. |
 | Return | `controllers/front/return.php` | The buyer lands here after paying. If the order already exists they go to the order-confirmation page; otherwise the module polls `GET /v1/payments/{id}` — `paid` creates the order right there, `pending` shows an auto-refreshing wait page, `failed` / `expired` offers a retry. |
 | Confirmation | `hookDisplayPaymentReturn` | Small "payment received" block on the standard order-confirmation page. |
 
@@ -75,6 +75,12 @@ php test/compile-check.php
 ```
 
 ## Changelog
+
+### 1.1.0
+
+- Webhook hardening: timestamped `X-1pay-Signature-V2` (5-minute window) with legacy
+  fallback, notify amount and currency required and matched to the stored quote, test payments
+  refused under a live key, every paid notify re-confirmed with `GET /v1/payments/{id}`.
 
 ### 1.0.0
 

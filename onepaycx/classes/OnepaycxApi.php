@@ -18,7 +18,7 @@ class OnepaycxApi
 {
     const API_BASE = 'https://api.1pay.cx';
     const CHECKOUT_BASE = 'https://1pay.cx';
-    const USER_AGENT = 'onepaycx-prestashop/1.0.0';
+    const USER_AGENT = 'onepaycx-prestashop/1.1.0';
 
     /** @var string */
     private $key;
